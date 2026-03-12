@@ -250,10 +250,19 @@ iframe {
 
 /* Streamlit header styling */
 [data-testid="stHeader"] {
-    background: linear-gradient(90deg,#0f172a,#0b3a75);
-    border-bottom: 1px solid rgba(148,163,184,0.3);
+    background: linear-gradient(
+        90deg,
+        #020617,
+        #0f172a,
+        #0b3a75,
+        #0ea5e9
+    );
+    border-bottom: 1px solid rgba(148,163,184,0.35);
 }
 
+[data-testid="stHeader"] {
+    backdrop-filter: blur(8px);
+}
 /* Toolbar icons */
 [data-testid="stToolbar"] button {
     color: white;
@@ -262,6 +271,13 @@ iframe {
 [data-testid="stMainBlockContainer"] {
     margin-top: 50px;
 }
+
+.insight-scroll {
+    max-height: 75vh;
+    overflow-y: auto;
+    padding-right: 6px;
+}
+
 
 @keyframes rise-in {
     from {
@@ -273,6 +289,11 @@ iframe {
         transform: translateY(0);
     }
 }
+.insight-card strong{
+ color: #0ea5e9
+}
+
+
 
 @media (max-width: 1080px) {
     .hero {
@@ -286,4 +307,25 @@ iframe {
     .metric-shell {
         min-height: 108px;
     }
+}
+
+/* Mobile scroll fix */
+@media (max-width: 768px) {
+
+    .block-container {
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+
+    /* allow vertical scrolling when map is touched */
+    iframe {
+        touch-action: pan-y;
+    }
+
+    /* stack columns vertically on mobile */
+    [data-testid="column"] {
+        width: 100% !important;
+        flex: 100% !important;
+    }
+
 }

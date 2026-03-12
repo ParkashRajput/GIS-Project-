@@ -4,6 +4,10 @@ import geopandas as gpd
 import streamlit as st
 from shapely.geometry import Point
 from streamlit_folium import st_folium
+import plotly.express as px
+import plotly.graph_objects as go
+
+map_height = 700 if st.session_state.get("is_desktop", True) else 420
 
 st.set_page_config(
     page_title="Water Quality Intelligence Dashboard",
@@ -253,6 +257,15 @@ with st.sidebar:
         "Select Station",
         ["All Stations"] + station_list
     )
+    
+    with st.sidebar:
+        ...
+        st.markdown("---")
+        st.subheader("Download Data")
+
+        download_filtered_placeholder = st.empty()
+        download_full_placeholder = st.empty()
+
 
 
 # ---------------- Filtering ---------------- #
@@ -271,6 +284,32 @@ if search_station != "All Stations":
 filtered_3857 = station_gdf_3857.loc[filtered.index]
 
 
+
+# ---------------- Download Data ---------------- #
+
+csv_filtered = filtered[
+    ["location", "ph", "category", "lat", "lon"]
+].to_csv(index=False).encode("utf-8")
+
+download_filtered_placeholder.download_button(
+    label="Download Filtered Stations",
+    data=csv_filtered,
+    file_name="hisar_filtered_water_quality.csv",
+    mime="text/csv",
+)
+
+csv_all = station_gdf[
+    ["location", "ph", "category", "lat", "lon"]
+].to_csv(index=False).encode("utf-8")
+
+download_full_placeholder.download_button(
+    label="Download Full Dataset",
+    data=csv_all,
+    file_name="hisar_all_stations.csv",
+    mime="text/csv",
+)
+
+
 # ---------------- Metrics ---------------- #
 
 active_count = len(filtered)
@@ -285,7 +324,28 @@ metric_cols[1].markdown(metric_block("Average pH", f"{avg_ph:.2f}", "District sn
 metric_cols[2].markdown(metric_block("Safe Stations", safe_count, "Safe water range"), unsafe_allow_html=True)
 metric_cols[3].markdown(metric_block("Attention Needed", risk_count, "Acidic or alkaline"), unsafe_allow_html=True)
 
+# ---------------- Districts Insight Summary ---------------- #
+if not filtered.empty:
+    acidic = (filtered["category"] == "Acidic").sum()
+    alkaline = (filtered["category"] == "Alkaline").sum()
+    safe = (filtered["category"] == "Safe").sum()
 
+    safe_percent = (safe/len(filtered))*100
+    
+    st.markdown(
+        f"""
+        <div class = "insight-card"> 
+         <p class = "insight-label">District Water Quality Summary</p>
+         <p>
+         {safe_percent:.0f}% of monitoring stations fall within the safe pH range(6.5 - 8.5).
+         {acidic + alkaline} stations show non neutral radings requiring monitoring.
+         Average district pH is <strong>{avg_ph:.2f}</strong>.
+         </p>   
+        </div>    
+        """,
+        unsafe_allow_html=True,
+    )
+    
 # ---------------- Map ---------------- #
 
 center_lat = filtered["lat"].mean() if not filtered.empty else station_gdf["lat"].mean()
@@ -308,7 +368,7 @@ with map_col:
 
     map_state = st_folium(
         m,
-        height=700,
+        height=map_height,
         use_container_width=True,
     )
 
@@ -316,11 +376,10 @@ with map_col:
 with insight_col:
 
     st.markdown("<h3 class='panel-heading'>Station Insights</h3>", unsafe_allow_html=True)
-
+    st.markdown('<div class="insight-scroll">', unsafe_allow_html=True)
     selected_station = None
 
     if map_state and map_state.get("last_clicked"):
-
         selected_station = nearest_station(
             filtered_3857,
             filtered,
@@ -333,21 +392,74 @@ with insight_col:
 
     if selected_station is not None:
 
-        st.markdown(
-            f"""
-            <div class="insight-card">
-                <p class="insight-label">Focused Station</p>
-                <h4>{selected_station['location']}</h4>
-                <p><strong>pH:</strong> {selected_station['ph']:.2f}</p>
-                <p><strong>Category:</strong> {selected_station['category']}</p>
-                <p><strong>Latitude:</strong> {selected_station['lat']:.5f}</p>
-                <p><strong>Longitude:</strong> {selected_station['lon']:.5f}</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        difference = selected_station["ph"] - avg_ph
+        status = "⬆ Higher than District average" if difference > 0 else "⬇ Lower than district average"
+
+        html = f"""
+<div class="insight-card">
+<p class="insight-label">Focused Station</p>
+<h4>{selected_station['location']}</h4>
+
+<p><strong>pH:</strong> {selected_station['ph']:.2f}</p>
+<p><strong>Category:</strong> {selected_station['category']}</p>
+
+<p><strong>District Avg:</strong> {avg_ph:.2f}</p>
+<p><strong>Difference:</strong> {difference:+.2f} ({status})</p>
+
+<p><strong>Latitude:</strong> {selected_station['lat']:.5f}</p>
+<p><strong>Longitude:</strong> {selected_station['lon']:.5f}</p>
+</div>
+"""
+        st.markdown(html, unsafe_allow_html=True)
+
+        # progress bar
+        st.progress(min(max(selected_station["ph"] / 14.0, 0), 1))
+        
+        # ---- PH GAUGE (INSIDE RIGHT PANEL) ---- #
+
+        gauge = go.Figure(
+            go.Indicator(
+                mode="gauge+number",
+                value=float(selected_station["ph"]),
+                title={"text": "pH Level"},
+                gauge={
+                    "axis": {"range": [0, 14]},
+                    "bar": {"color": "#0ea5e9"},
+                    "steps": [
+                        {"range": [0, 6.5], "color": "#fecaca"},
+                        {"range": [6.5, 8.5], "color": "#bbf7d0"},
+                        {"range": [8.5, 14], "color": "#bfdbfe"},
+                    ],
+                    "threshold": {
+                        "line": {"color": "red", "width": 4},
+                        "thickness": 0.75,
+                        "value": float(selected_station["ph"]),
+                    },
+                },
+            )
         )
 
-        st.progress(min(max(selected_station["ph"] / 14.0, 0), 1))
+        gauge.update_layout(
+            height=220,
+            margin=dict(l=10, r=10, t=35, b=10),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+
+        st.plotly_chart(gauge, use_container_width=True)
+        
+        percentile = (filtered["ph"] < selected_station["ph"]).mean() * 100
+
+        st.markdown(
+        f"""
+        <div class="insight-card">
+        <p class="insight-label">Station Ranking</p>
+        <p>This station has higher pH than <strong>{percentile:.1f}%</strong> of monitoring stations.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ---------------- Chart ---------------- #
@@ -355,28 +467,64 @@ with insight_col:
 st.markdown("<h3 class='panel-heading'>Quality Distribution</h3>", unsafe_allow_html=True)
 
 dist = filtered["category"].value_counts().reindex(
-    CATEGORY_ORDER,
+    CATEGORY_ORDER, 
     fill_value=0,
 )
 
-st.bar_chart(dist)
 
 
-# ---------------- Table ---------------- #
+dist_df = dist.reset_index()
+dist_df.columns = ["Category", "Count"]
 
-st.markdown("<h3 class='panel-heading'>Station Table</h3>", unsafe_allow_html=True)
+fig = px.bar(
+    dist_df,
+    x="Category",
+    y = "Count",
+    color = "Category",
+    color_discrete_map={
+        "Acidic":"#ef4444",
+        "Safe":"#22c55e",
+        "Alkaline":"#2563eb",
+    },
+)
 
-if not filtered.empty:
+fig.update_layout(
+    template = "plotly_white",
+    height = 320,
+    margin = dict(l=10, r=10, t=20, b=10),
+)
+st.plotly_chart(fig, use_container_width=True)
 
-    table = filtered[
-        ["location", "ph", "category", "lat", "lon"]
-    ].sort_values(
-        by="ph",
-        ascending=False,
-    )
+# ---------------- Out Lier Section---------------- #
 
-    st.dataframe(
-        table,
-        use_container_width=True,
-        height=350,
-    )
+outliers = filtered[(filtered["ph"] < 6.5) | (filtered["ph"] > 8.5)]
+
+if not outliers.empty:
+    st.markdown(        f"""
+        <div class="insight-card">
+            <p class="insight-label">Water Quality Alert</p>
+            <p>{len(outliers)} stations show abnormal pH values outside safe drinking range.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+)
+
+
+# # ---------------- Table ---------------- #
+
+# st.markdown("<h3 class='panel-heading'>Station Table</h3>", unsafe_allow_html=True)
+
+# if not filtered.empty:
+
+#     table = filtered[
+#         ["location", "ph", "category", "lat", "lon"]
+#     ].sort_values(
+#         by="ph",
+#         ascending=False,
+#     )
+
+#     st.dataframe(
+#         table,
+#         use_container_width=True,
+#         height=350,
+#     )
