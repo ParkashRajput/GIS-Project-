@@ -233,6 +233,13 @@ with st.sidebar:
     st.header("Control Panel")
 
     selected_basemap = st.selectbox("Map Theme", list(BASEMAPS.keys()))
+    
+    mobile_layout = st.checkbox(
+        "Mobile Layout",
+        value= False,
+        help = "stack map and insights vertically for small screens",
+    )
+    st.session_state['mobile'] = mobile_layout
 
     min_ph = float(station_gdf["ph"].min())
     max_ph = float(station_gdf["ph"].max())
@@ -351,7 +358,13 @@ if not filtered.empty:
 center_lat = filtered["lat"].mean() if not filtered.empty else station_gdf["lat"].mean()
 center_lon = filtered["lon"].mean() if not filtered.empty else station_gdf["lon"].mean()
 
-map_col, insight_col = st.columns([3.2, 1.35], gap="large")
+is_mobile = st.session_state.get('mobile', False)
+if is_mobile:
+    map_col = st.container()
+    insight_col = st.container()
+else:
+    map_col, insight_col = st.columns([3.2, 1.35], gap="large")
+        
 
 with map_col:
 
@@ -426,9 +439,9 @@ with insight_col:
                     "axis": {"range": [0, 14]},
                     "bar": {"color": "#0ea5e9"},
                     "steps": [
-                        {"range": [0, 6.5], "color": "#fecaca"},
-                        {"range": [6.5, 8.5], "color": "#bbf7d0"},
-                        {"range": [8.5, 14], "color": "#bfdbfe"},
+                        {"range": [0, 6.5], "color": "#d75d5d"},
+                        {"range": [6.5, 8.5], "color": "#4dd17b"},
+                        {"range": [8.5, 14], "color": "#6596d3"},
                     ],
                     "threshold": {
                         "line": {"color": "red", "width": 4},
