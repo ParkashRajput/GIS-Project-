@@ -327,5 +327,28 @@ iframe {
         width: 100% !important;
         flex: 100% !important;
     }
+}
+
+/* ---------- MOBILE RESPONSIVE LAYOUT ---------- */
+
+@media (max-width: 768px) {
+
+    /* Stack Streamlit columns vertically */
+    [data-testid="column"] {
+        width: 100% !important;
+        flex: 100% !important;
+    }
+
+    /* Reduce map height for phones */
+    iframe {
+        height: 420px !important;
+    }
+
+    /* Add spacing between stacked sections */
+    [data-testid="column"] > div {
+        margin-bottom: 20px;
+    }
 
 }
+
+
