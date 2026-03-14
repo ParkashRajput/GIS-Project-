@@ -6,14 +6,21 @@ from shapely.geometry import Point
 from streamlit_folium import st_folium
 import plotly.express as px
 import plotly.graph_objects as go
+from folium.plugins import FastMarkerCluster, MarkerCluster
+from sklearn.cluster import DBSCAN
+from shapely.geometry import MultiPoint
+import alphashape
 
-map_height = 700 if st.session_state.get("is_desktop", True) else 420
 
+# FIX 1: set_page_config must be first, map_height comes after so
+# session_state is available. Key corrected from "is_desktop" to "mobile".
 st.set_page_config(
     page_title="Water Quality Intelligence Dashboard",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+map_height = 420 if st.session_state.get("mobile", False) else 700
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -74,7 +81,7 @@ def metric_block(title, value, note):
 
 # ---------------- Data Loader ---------------- #
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner="Loading district data…")
 def load_data():
 
     boundary = gpd.read_file(DATA_DIR / "hisar_new_boundary.geojson").to_crs("EPSG:4326")
@@ -116,6 +123,14 @@ def tooltip_html(row):
     )
 
 
+def compute_clusters(stations):
+    if stations.empty:
+        return []
+    coords = stations[["lat", "lon"]].values
+    labels = DBSCAN(eps=0.02, min_samples=3).fit(coords).labels_
+    return labels
+
+
 # ---------------- Map Builder ---------------- #
 
 def build_map(boundary, villages, stations, center_lat, center_lon, basemap):
@@ -128,7 +143,11 @@ def build_map(boundary, villages, stations, center_lat, center_lon, basemap):
         prefer_canvas=True,
     )
 
+    # ---------------- Basemap ---------------- #
+
     folium.TileLayer(**BASEMAPS[basemap]).add_to(m)
+
+    # ---------------- District Boundary ---------------- #
 
     folium.GeoJson(
         boundary,
@@ -140,6 +159,8 @@ def build_map(boundary, villages, stations, center_lat, center_lon, basemap):
             "weight": 2,
         },
     ).add_to(m)
+
+    # ---------------- Village Boundaries ---------------- #
 
     folium.GeoJson(
         villages,
@@ -159,8 +180,24 @@ def build_map(boundary, villages, stations, center_lat, center_lon, basemap):
         ),
     ).add_to(m)
 
-    for _, row in stations.iterrows():
+    # ---------------- Spatial Clustering ---------------- #
 
+    stations = stations.copy()
+    stations["cluster"] = compute_clusters(stations)
+
+    # ---------------- Marker Cluster ---------------- #
+
+    marker_cluster = MarkerCluster(
+        name="Water Quality Stations",
+        options={
+            "zoomToBoundsOnClick": True,
+            "spiderfyOnMaxZoom": True,
+            "showCoverageOnHover": False,
+            "spiderfyDistanceMultiplier": 1.2,
+        }
+    ).add_to(m)
+
+    for _, row in stations.iterrows():
         folium.CircleMarker(
             location=[row["lat"], row["lon"]],
             radius=8,
@@ -170,7 +207,48 @@ def build_map(boundary, villages, stations, center_lat, center_lon, basemap):
             fill_color=row["marker_color"],
             fill_opacity=0.9,
             tooltip=folium.Tooltip(tooltip_html(row)),
+        ).add_to(marker_cluster)
+
+    # ---------------- Cluster Polygons ---------------- #
+
+    for cluster_id in stations["cluster"].unique():
+        if cluster_id == -1:
+            continue
+
+        cluster_points = stations[stations["cluster"] == cluster_id]
+
+        coords_list = [
+            (row["lon"], row["lat"])
+            for _, row in cluster_points.iterrows()
+        ]
+
+        if len(coords_list) < 3:
+            continue
+
+        alpha_shape = alphashape.alphashape(coords_list, 0.5)
+
+        avg_ph = cluster_points["ph"].mean()
+
+        if avg_ph < 6.5:
+            color = "#ef4444"
+        elif avg_ph <= 8.5:
+            color = "#22c55e"
+        else:
+            color = "#2563eb"
+
+        folium.GeoJson(
+            alpha_shape,
+            name=f"Cluster {cluster_id}",
+            style_function=lambda _, col=color: {
+                "color": col,
+                "fillColor": col,
+                "weight": 2,
+                "fillOpacity": 0.18,
+            },
+            tooltip=f"Cluster {cluster_id} | Stations: {len(cluster_points)} | Avg pH: {avg_ph:.2f}",
         ).add_to(m)
+
+    # ---------------- Legend ---------------- #
 
     legend_html = """
     <div class="map-legend">
@@ -182,6 +260,10 @@ def build_map(boundary, villages, stations, center_lat, center_lon, basemap):
     """
 
     m.get_root().html.add_child(folium.Element(legend_html))
+
+    # ---------------- Layer Control ---------------- #
+
+    folium.LayerControl().add_to(m)
 
     return m
 
@@ -228,18 +310,19 @@ st.markdown(
 
 # ---------------- Sidebar ---------------- #
 
+# FIX 2: Removed the double nested "with st.sidebar" block.
 with st.sidebar:
 
     st.header("Control Panel")
 
     selected_basemap = st.selectbox("Map Theme", list(BASEMAPS.keys()))
-    
+
     mobile_layout = st.checkbox(
         "Mobile Layout",
-        value= False,
-        help = "stack map and insights vertically for small screens",
+        value=False,
+        help="stack map and insights vertically for small screens",
     )
-    st.session_state['mobile'] = mobile_layout
+    st.session_state["mobile"] = mobile_layout
 
     min_ph = float(station_gdf["ph"].min())
     max_ph = float(station_gdf["ph"].max())
@@ -259,20 +342,17 @@ with st.sidebar:
     )
 
     station_list = sorted(station_gdf["location"].dropna().unique())
-    
+
     search_station = st.selectbox(
         "Select Station",
         ["All Stations"] + station_list
     )
-    
-    with st.sidebar:
-        ...
-        st.markdown("---")
-        st.subheader("Download Data")
 
-        download_filtered_placeholder = st.empty()
-        download_full_placeholder = st.empty()
+    st.markdown("---")
+    st.subheader("Download Data")
 
+    download_filtered_placeholder = st.empty()
+    download_full_placeholder = st.empty()
 
 
 # ---------------- Filtering ---------------- #
@@ -289,7 +369,6 @@ if search_station != "All Stations":
     ]
 
 filtered_3857 = station_gdf_3857.loc[filtered.index]
-
 
 
 # ---------------- Download Data ---------------- #
@@ -331,40 +410,43 @@ metric_cols[1].markdown(metric_block("Average pH", f"{avg_ph:.2f}", "District sn
 metric_cols[2].markdown(metric_block("Safe Stations", safe_count, "Safe water range"), unsafe_allow_html=True)
 metric_cols[3].markdown(metric_block("Attention Needed", risk_count, "Acidic or alkaline"), unsafe_allow_html=True)
 
-# ---------------- Districts Insight Summary ---------------- #
+
+# ---------------- District Insight Summary ---------------- #
+
 if not filtered.empty:
     acidic = (filtered["category"] == "Acidic").sum()
     alkaline = (filtered["category"] == "Alkaline").sum()
     safe = (filtered["category"] == "Safe").sum()
 
-    safe_percent = (safe/len(filtered))*100
-    
+    safe_percent = (safe / len(filtered)) * 100
+
     st.markdown(
         f"""
-        <div class = "insight-card"> 
-         <p class = "insight-label">District Water Quality Summary</p>
+        <div class="insight-card">
+         <p class="insight-label">District Water Quality Summary</p>
          <p>
          {safe_percent:.0f}% of monitoring stations fall within the safe pH range(6.5 - 8.5).
-         {acidic + alkaline} stations show non neutral radings requiring monitoring.
+         {acidic + alkaline} stations show non neutral readings requiring attention.
          Average district pH is <strong>{avg_ph:.2f}</strong>.
-         </p>   
-        </div>    
+         </p>
+        </div>
         """,
         unsafe_allow_html=True,
     )
-    
+
+
 # ---------------- Map ---------------- #
 
 center_lat = filtered["lat"].mean() if not filtered.empty else station_gdf["lat"].mean()
 center_lon = filtered["lon"].mean() if not filtered.empty else station_gdf["lon"].mean()
 
-is_mobile = st.session_state.get('mobile', False)
+is_mobile = st.session_state.get("mobile", False)
 if is_mobile:
     map_col = st.container()
     insight_col = st.container()
 else:
     map_col, insight_col = st.columns([3.2, 1.35], gap="large")
-        
+
 
 with map_col:
 
@@ -427,7 +509,7 @@ with insight_col:
 
         # progress bar
         st.progress(min(max(selected_station["ph"] / 14.0, 0), 1))
-        
+
         # ---- PH GAUGE (INSIDE RIGHT PANEL) ---- #
 
         gauge = go.Figure(
@@ -460,7 +542,7 @@ with insight_col:
         )
 
         st.plotly_chart(gauge, use_container_width=True)
-        
+
         percentile = (filtered["ph"] < selected_station["ph"]).mean() * 100
 
         st.markdown(
@@ -480,11 +562,9 @@ with insight_col:
 st.markdown("<h3 class='panel-heading'>Quality Distribution</h3>", unsafe_allow_html=True)
 
 dist = filtered["category"].value_counts().reindex(
-    CATEGORY_ORDER, 
+    CATEGORY_ORDER,
     fill_value=0,
 )
-
-
 
 dist_df = dist.reset_index()
 dist_df.columns = ["Category", "Count"]
@@ -492,35 +572,37 @@ dist_df.columns = ["Category", "Count"]
 fig = px.bar(
     dist_df,
     x="Category",
-    y = "Count",
-    color = "Category",
+    y="Count",
+    color="Category",
     color_discrete_map={
-        "Acidic":"#ef4444",
-        "Safe":"#22c55e",
-        "Alkaline":"#2563eb",
+        "Acidic": "#ef4444",
+        "Safe": "#22c55e",
+        "Alkaline": "#2563eb",
     },
 )
 
 fig.update_layout(
-    template = "plotly_white",
-    height = 320,
-    margin = dict(l=10, r=10, t=20, b=10),
+    template="plotly_white",
+    height=320,
+    margin=dict(l=10, r=10, t=20, b=10),
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# ---------------- Out Lier Section---------------- #
+
+# ---------------- Outlier Section ---------------- #
 
 outliers = filtered[(filtered["ph"] < 6.5) | (filtered["ph"] > 8.5)]
 
 if not outliers.empty:
-    st.markdown(        f"""
+    st.markdown(
+        f"""
         <div class="insight-card">
             <p class="insight-label">Water Quality Alert</p>
             <p>{len(outliers)} stations show abnormal pH values outside safe drinking range.</p>
         </div>
         """,
         unsafe_allow_html=True,
-)
+    )
 
 
 # # ---------------- Table ---------------- #
