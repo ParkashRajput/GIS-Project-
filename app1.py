@@ -3,6 +3,7 @@ import folium
 import geopandas as gpd
 import streamlit as st
 from shapely.geometry import Point
+import google.generativeai as genai
 from streamlit_folium import st_folium
 import plotly.express as px
 import plotly.graph_objects as go
@@ -15,6 +16,98 @@ import alphashape
 # ================================================================ #
 #  PAGE CONFIG — must be first Streamlit call                      #
 # ================================================================ #
+
+GEMINI_API_KEY = "AIzaSyD0gMqxHxljnQzHRyJ3vTouoNgNgEQG4gg"
+genai.configure(api_key=GEMINI_API_KEY)
+import google.generativeai as genai
+
+genai.configure(api_key="AIzaSyD0gMqxHxljnQzHRyJ3vTouoNgNgEQG4gg")
+models = genai.list_models()
+for model in models:
+    if 'generateContent' in model.supported_generation_methods:
+        print(model.name)
+model = genai.GenerativeModel("gemini-3-flash-preview")
+
+if "gemini_messages" not in st.session_state:
+    st.session_state.gemini_messages = []
+
+st.markdown(
+    """
+    <section class="hero">
+        <p class="hero-label">Groundwater Monitoring Platform</p>
+        <h1 class="hero-title">Water Quality Intelligence Dashboard</h1>
+        <p class="hero-subtitle">
+            Live geospatial monitoring of station-level pH readings with hover-enabled location cards,
+            district boundary context, and decision-friendly analytics.
+        </p>
+    </section>
+    """,
+    unsafe_allow_html=True,
+)
+
+with st.sidebar:
+    st.header("Control Panel")
+    selected_basemap = st.selectbox("Map Theme", list(BASEMAPS.keys()), index=0)
+
+    min_ph = float(station_gdf["ph"].min())
+    max_ph = float(station_gdf["ph"].max())
+    ph_range = st.slider(
+        "pH Filter",
+        min_value=min_ph,
+        max_value=max_ph,
+        value=(min_ph, max_ph),
+        step=0.01,
+    )
+
+    categories = st.multiselect(
+        "Quality Class",
+        options=CATEGORY_ORDER,
+        default=CATEGORY_ORDER,
+    )
+
+    search_station = st.text_input("Find Station")
+
+    # ---- COMPUTE filtered HERE (so it's available for the chat) ----
+    filtered = station_gdf[
+        (station_gdf["ph"] >= ph_range[0])
+        & (station_gdf["ph"] <= ph_range[1])
+        & (station_gdf["category"].isin(categories))
+    ].copy()
+
+    if search_station.strip():
+        filtered = filtered[
+            filtered["location"].str.contains(search_station.strip(), case=False, na=False)
+        ].copy()
+
+    # ---- AI ASSISTANT (now filtered is defined) ----
+    st.divider()
+    with st.expander("💬 AI Assistant", expanded=False):
+        st.caption("Ask about water quality")
+        # Display chat history
+        for msg in st.session_state.gemini_messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        # Chat input
+        if prompt := st.chat_input("Ask Gemini..."):
+            # Add user message
+            st.session_state.gemini_messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            # Build context using filtered (defined above)
+            context = build_chat_context(filtered)
+            full_prompt = f"{context}\n\nUser question: {prompt}"
+            try:
+                response = model.generate_content(full_prompt)
+                reply = response.text
+            except Exception as e:
+                reply = f"Error calling Gemini: {e}"
+
+            # Add assistant message
+            st.session_state.gemini_messages.append({"role": "assistant", "content": reply})
+            with st.chat_message("assistant"):
+                st.markdown(reply)
 
 st.set_page_config(
     page_title="Water Quality Intelligence Dashboard",

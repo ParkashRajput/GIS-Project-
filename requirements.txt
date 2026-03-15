@@ -5,3 +5,4 @@ streamlit-folium
 shapely
 alphashape
 scikit-learn
+google-generativeai
