@@ -17,11 +17,11 @@ import alphashape
 #  PAGE CONFIG — must be first Streamlit call                      #
 # ================================================================ #
 
-GEMINI_API_KEY = "AIzaSyD0gMqxHxljnQzHRyJ3vTouoNgNgEQG4gg"
+GEMINI_API_KEY = "API_KEY"  # Replace with your actual Gemini API key
 genai.configure(api_key=GEMINI_API_KEY)
 import google.generativeai as genai
 
-genai.configure(api_key="AIzaSyD0gMqxHxljnQzHRyJ3vTouoNgNgEQG4gg")
+genai.configure(api_key="API_KEY")  # Replace with your actual Gemini API key
 models = genai.list_models()
 for model in models:
     if 'generateContent' in model.supported_generation_methods:
